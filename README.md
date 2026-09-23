@@ -11,6 +11,29 @@ Mission Control for Omarchy. See your windows, find the one you want, and bring 
 
 One shortcut. All your windows. Less hunting.
 
-Built for Hyprland with Quickshell. Press **Ctrl+↑** to toggle Mission Control, just like on macOS.
+Built for Hyprland with Quickshell.
 
-Companion desktop shortcuts: **Ctrl+←** and **Ctrl+→** slide between desktops.
+## Install
+
+Needs Omarchy (Hyprland + Quickshell). Clone this repo, then point two user config lines at it. Replace the path if you cloned somewhere else.
+
+```lua
+-- ~/.config/hypr/autostart.lua
+o.launch_on_start("quickshell -n -p /home/YOU/Projects/omarchycontrol")
+
+-- ~/.config/hypr/bindings.lua
+o.bind("CTRL + UP", "Mission control", "quickshell ipc -p /home/YOU/Projects/omarchycontrol call -- missioncontrol toggle")
+```
+
+Start it for this session:
+
+```sh
+quickshell -n -p /home/YOU/Projects/omarchycontrol
+```
+
+Press **Ctrl+↑** to toggle. Optional, same as macOS Spaces:
+
+```lua
+o.bind("CTRL + LEFT", "Previous desktop", hl.dsp.focus({ workspace = "e-1" }))
+o.bind("CTRL + RIGHT", "Next desktop", hl.dsp.focus({ workspace = "e+1" }))
+```
