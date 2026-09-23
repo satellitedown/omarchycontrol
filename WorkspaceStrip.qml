@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls as Controls
+import QtQuick.Effects
 import "OverviewModel.js" as Model
 
 Item {
@@ -252,26 +253,40 @@ Item {
                 id: canvas
                 width: desktop.width
                 height: root.thumbnailHeight
-                color: root.theme.background
+                color: "transparent"
                 radius: 6
                 clip: true
+                Rectangle {
+                    id: canvasMask
+                    width: canvas.width
+                    height: canvas.height
+                    radius: canvas.radius
+                    visible: false
+                    layer.enabled: true
+                }
+                // Clipping alone cuts a rectangle, so the wallpaper and the
+                // miniature windows would spill past the rounded border.
+                layer.enabled: true
+                layer.effect: MultiEffect { maskEnabled: true; maskSource: canvasMask }
+
+                // Outside the viewport-gated loader: one shared decode that
+                // stays resident instead of reloading on every opening.
+                Image {
+                    anchors.fill: parent
+                    source: root.theme.wallpaperSource
+                    asynchronous: true
+                    cache: true
+                    fillMode: Image.PreserveAspectCrop
+                    sourceSize.width: Math.max(1,
+                        Math.min(1024, Math.ceil(canvas.width * Screen.devicePixelRatio)))
+                    sourceSize.height: Math.max(1,
+                        Math.min(1024, Math.ceil(canvas.height * Screen.devicePixelRatio)))
+                }
 
                 Loader {
                     anchors.fill: parent
                     active: root.controller.opened && desktop.intersectsViewport
                     sourceComponent: Item {
-                        Image {
-                            anchors.fill: parent
-                            z: -1
-                            source: root.theme.wallpaperSource
-                            asynchronous: true
-                            fillMode: Image.PreserveAspectCrop
-                            sourceSize.width: Math.max(1,
-                                Math.min(1024, Math.ceil(canvas.width * Screen.devicePixelRatio)))
-                            sourceSize.height: Math.max(1,
-                                Math.min(1024, Math.ceil(canvas.height * Screen.devicePixelRatio)))
-                        }
-
                         Repeater {
                             model: desktop._snapshotRows
                             delegate: WindowPreview {

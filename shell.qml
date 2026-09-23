@@ -5,8 +5,8 @@ ShellRoot {
     Theme { id: appTheme }
     OverviewController { id: appController }
     Connections { target: appController; function onOpenedChanged() { if (appController.opened) appTheme.reload() } }
-    // Keep only the static scene/wallpaper warm. Closing clears both models,
-    // destroying window captures, and unmaps the panel via controller.opened.
+    // Keep the overlay mapped so the wallpaper stays decoded. Closing clears
+    // window captures; the panel itself stays input-transparent while closed.
     OverviewWindow { controller: appController; theme: appTheme }
     IpcHandler {
         target: "missioncontrol"

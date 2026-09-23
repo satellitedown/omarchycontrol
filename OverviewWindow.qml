@@ -7,15 +7,18 @@ PanelWindow {
     id: panel
     required property var controller
     required property var theme
-    screen: controller.targetScreen
-    visible: controller.opened
+    screen: controller.targetScreen || Quickshell.screens[0]
+    // Stay mapped for the app's lifetime. Unmapping destroys the layer surface,
+    // which drops the decoded wallpaper and re-decodes a 15 MB PNG (~110 ms) on
+    // every opening. While closed the surface accepts no input and draws
+    // nothing, so the desktop behaves exactly as before.
+    visible: true
+    mask: controller.opened ? openMask : closedMask
+    Region { id: closedMask }
+    Region { id: openMask; item: surface }
 
-    // Decode the wallpaper at the output's physical resolution, resolved
-    // before first use. A size that changes when the layer maps restarts
-    // decoding and stalls the entrance on a fresh frame. The long edge is
-    // capped because the compositor re-decodes on every mapping, and a
-    // full 3840x2160 PNG costs ~150 ms while staying visually identical
-    // behind the dim overlay.
+    // Decode once at a size that stays sharp on this output. The layer
+    // surface stays mapped, so this is not paid again on later openings.
     readonly property int wallpaperDecodeLimit: 2560
     property size wallpaperDecodeSize: Qt.size(0, 0)
     function syncWallpaperDecodeSize() {
@@ -138,12 +141,13 @@ PanelWindow {
             entranceStarted = true;
             captureDeadline.stop();
             entrance.start();
-            // Chrome uses the same reveal, so nothing is drawn over the live
-            // desktop while the layer surface is still producing its first frame.
-            chromeAnimation.start();
+            // Chrome settles in just after the windows start moving, so it reads
+            // as one motion instead of two things appearing at once.
+            chromeDelay.start();
         }
         function close() {
             captureDeadline.stop();
+            chromeDelay.stop();
             entrance.stop();
             chromeAnimation.stop();
             if (entranceProgress === 0) {
@@ -169,6 +173,7 @@ PanelWindow {
             panel.syncWallpaperDecodeSize();
             entrance.stop();
             chromeAnimation.stop();
+            chromeDelay.stop();
             entranceProgress = 0;
             chromeProgress = 0;
             entranceStarted = false;
@@ -177,7 +182,7 @@ PanelWindow {
             entrance.to = 1;
             entrance.duration = 300;
             chromeAnimation.to = 1;
-            chromeAnimation.duration = 160;
+            chromeAnimation.duration = 260;
             forceActiveFocus();
             if (panel.controller.closing) { close(); return; }
             captureDeadline.start();
@@ -189,7 +194,7 @@ PanelWindow {
         FrameAnimation {
             running: panel.controller.opened && !surface.entranceStarted && !panel.controller.closing
             onTriggered: {
-                if (surface.sceneReady && ++surface.warmFrames >= 2)
+                if (surface.sceneReady && ++surface.warmFrames >= 1)
                     surface.startEntrance();
             }
         }
@@ -205,28 +210,48 @@ PanelWindow {
         NumberAnimation {
             id: chromeAnimation
             target: surface; property: "chromeProgress"
-            to: 1; duration: 160; easing.type: Easing.OutCubic
+            to: 1; duration: 260; easing.type: Easing.OutCubic
+        }
+        Timer {
+            id: chromeDelay
+            interval: 60
+            repeat: false
+            onTriggered: if (!panel.controller.closing) chromeAnimation.start()
         }
         Keys.onPressed: event => panel.key(event)
-        // The container stays visible so the decoded wallpaper is never
-        // released; hiding an Image makes it reload and re-decode on the next
-        // opening, which stalled the entrance for ~300 ms.
-        Item {
+        // Keep the wallpaper in an offscreen buffer even while closed. An
+        // opacity-0 Image skips GPU upload, so the first visible frame would
+        // otherwise be the gray fill. Never paint that fill.
+        Image {
+            id: wallpaper
             anchors.fill: parent
-            readonly property real shown: surface.sceneReady || surface.entranceStarted ? 1 : 0
-            Rectangle { anchors.fill: parent; color: panel.theme.background; opacity: parent.shown }
-            Image {
-                id: wallpaper
-                anchors.fill: parent
-                source: panel.theme.wallpaperSource
-                sourceSize: panel.wallpaperDecodeSize
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                cache: true
-                opacity: parent.shown
-            }
-            // Dim the wallpaper as the windows settle, without a blur pass.
+            source: panel.theme.wallpaperSource
+            sourceSize: panel.wallpaperDecodeSize
+            fillMode: Image.PreserveAspectCrop
+            asynchronous: true
+            cache: true
+            onStatusChanged: if (status === Image.Ready) wallpaperBuffer.scheduleUpdate()
+        }
+        ShaderEffectSource {
+            id: wallpaperBuffer
+            anchors.fill: parent
+            sourceItem: wallpaper
+            hideSource: true
+            live: false
+            visible: true
+            opacity: panel.controller.opened && (surface.sceneReady || surface.entranceStarted)
+                     && wallpaper.status === Image.Ready ? 1 : 0
             Rectangle { anchors.fill: parent; color: "#26000000"; opacity: surface.entranceProgress }
+        }
+        Connections {
+            target: wallpaper
+            function onStatusChanged() {
+                if (wallpaper.status === Image.Ready)
+                    wallpaperBuffer.scheduleUpdate()
+            }
+            function onSourceChanged() { wallpaperBuffer.scheduleUpdate() }
+            function onWidthChanged() { wallpaperBuffer.scheduleUpdate() }
+            function onHeightChanged() { wallpaperBuffer.scheduleUpdate() }
         }
         MouseArea { anchors.fill: parent; onClicked: { if (panel.dragging) panel.cancelDrag(); else panel.controller.hide() } }
         Item {
@@ -242,7 +267,7 @@ PanelWindow {
             WorkspaceStrip {
                 id: strip
                 z: 3; opacity: surface.chromeProgress
-                transform: Translate { y: -16 * (1 - surface.chromeProgress) }
+                transform: Translate { y: -10 * (1 - surface.chromeProgress) }
                 x: 40; y: 24; width: Math.max(0, parent.width - 80)
                 height: Math.max(112,Math.min(164,parent.height*0.125))
                 controller: panel.controller; theme: panel.theme
@@ -327,7 +352,7 @@ PanelWindow {
                 }
                 Text {
                     anchors.centerIn: parent
-                    visible: panel.controller.windowModel.count === 0
+                    visible: panel.controller.opened && panel.controller.windowModel.count === 0
                     text: "No windows on this desktop"
                     color: panel.theme.overviewText
                     font.pixelSize: 24
