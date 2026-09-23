@@ -15,25 +15,12 @@ Built for Hyprland with Quickshell.
 
 ## Install
 
-Needs Omarchy (Hyprland + Quickshell). Clone this repo, then point two user config lines at it. Replace the path if you cloned somewhere else.
-
-```lua
--- ~/.config/hypr/autostart.lua
-o.launch_on_start("quickshell -n -p /home/YOU/Projects/omarchycontrol")
-
--- ~/.config/hypr/bindings.lua
-o.bind("CTRL + UP", "Mission control", "quickshell ipc -p /home/YOU/Projects/omarchycontrol call -- missioncontrol toggle")
-```
-
-Start it for this session:
+Needs Omarchy (Hyprland + Quickshell).
 
 ```sh
-quickshell -n -p /home/YOU/Projects/omarchycontrol
+curl -fsSL https://raw.githubusercontent.com/satellitedown/omarchycontrol/main/install.sh | bash
 ```
 
-Press **Ctrl+↑** to toggle. Optional, same as macOS Spaces:
+Or clone the repo and run `./install.sh`. Same thing if you point an agent at this README: run that script.
 
-```lua
-o.bind("CTRL + LEFT", "Previous desktop", hl.dsp.focus({ workspace = "e-1" }))
-o.bind("CTRL + RIGHT", "Next desktop", hl.dsp.focus({ workspace = "e+1" }))
-```
+It clones to `~/.local/share/omarchycontrol` (or uses the checkout you ran it from), adds autostart + **Ctrl+↑**, and starts it. **Ctrl+← / Ctrl+→** switch desktops if those lines are not already there.
