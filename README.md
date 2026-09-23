@@ -3,6 +3,7 @@
 Mission Control for Omarchy. See your windows, find the one you want, and bring it to the front.
 
 - **See more.** Large live previews fit around each other instead of sitting in a rigid grid.
+- **Stay sharp.** Your wallpaper, floating previews, and quick eased transitions—without a blur pass or heavy frames.
 - **Keep your bearings.** Windows keep their proportions, and desktop previews show what lives where.
 - **Tidy up by dragging.** Drop a window onto another desktop without switching away from your current one.
 - **Stay in your flow.** Click to focus and raise a window, use the keyboard to navigate, or hit Escape to leave everything as it was.

@@ -41,12 +41,27 @@ Item {
     Accessible.pressed: tap.pressed
 
     Rectangle {
-        anchors.fill: parent
-        radius: 12
-        color: root.theme.background
+        x: preview.x - 3 * root.chromeScale
+        y: preview.y + 3 * root.chromeScale
+        width: preview.width + 6 * root.chromeScale
+        height: preview.height + 3 * root.chromeScale
+        radius: 7 * root.chromeScale
+        color: "#18000000"
+        visible: preview.width > 0 && preview.height > 0
+    }
+
+    Rectangle {
+        x: preview.x - root.chromeScale
+        y: preview.y + 2 * root.chromeScale
+        width: preview.width + 2 * root.chromeScale
+        height: preview.height + root.chromeScale
+        radius: 4 * root.chromeScale
+        color: "#30000000"
+        visible: preview.width > 0 && preview.height > 0
     }
 
     WindowPreview {
+        id: preview
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
@@ -60,72 +75,99 @@ Item {
         mutedColor: root.theme.muted
     }
 
+    Rectangle {
+        anchors.fill: preview
+        color: "transparent"
+        border.width: Math.min(1, root.chromeScale)
+        border.color: "#38ffffff"
+        visible: preview.width > 0 && preview.height > 0
+    }
+
+    Rectangle {
+        anchors.fill: preview
+        anchors.margins: -3 * root.chromeScale
+        radius: 4 * root.chromeScale
+        color: "transparent"
+        border.width: 2 * root.chromeScale
+        border.color: root.theme.overviewAccent
+        opacity: root.selected ? 1 : (hover.hovered ? 0.75 : 0)
+        visible: preview.width > 0 && preview.height > 0
+
+        Behavior on opacity {
+            NumberAnimation { duration: 100; easing.type: Easing.OutCubic }
+        }
+    }
+
     Item {
         id: caption
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.leftMargin: 10 * root.chromeScale
-        anchors.rightMargin: 10 * root.chromeScale
-        height: Math.min(32 * root.chromeScale, root.height)
+        anchors.leftMargin: 6 * root.chromeScale
+        anchors.rightMargin: 6 * root.chromeScale
+        height: Math.max(0, Math.min(32 * root.chromeScale, root.height))
         clip: true
 
-        Item {
-            id: icon
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            width: 20 * root.chromeScale
-            height: 20 * root.chromeScale
+        Rectangle {
+            id: badge
+            anchors.centerIn: parent
+            width: Math.max(0, Math.min(caption.width,
+                titleLabel.implicitWidth + 42 * root.chromeScale))
+            height: Math.min(caption.height, 26 * root.chromeScale)
+            radius: 8 * root.chromeScale
+            color: "#a6222429"
+            clip: true
 
-            Image {
-                id: appIcon
-                anchors.fill: parent
-                source: root.iconSource
-                sourceSize: Qt.size(20, 20)
-                fillMode: Image.PreserveAspectFit
-                visible: status === Image.Ready
-            }
+            Item {
+                id: icon
+                anchors.left: parent.left
+                anchors.leftMargin: 7 * root.chromeScale
+                anchors.verticalCenter: parent.verticalCenter
+                width: 18 * root.chromeScale
+                height: 18 * root.chromeScale
 
-            Rectangle {
-                anchors.centerIn: parent
-                width: 18
-                height: 15
-                radius: 2
-                color: "transparent"
-                border.width: 1
-                border.color: root.theme.foreground
-                visible: !appIcon.visible
+                Image {
+                    id: appIcon
+                    anchors.fill: parent
+                    source: root.iconSource
+                    sourceSize: Qt.size(20, 20)
+                    fillMode: Image.PreserveAspectFit
+                    visible: status === Image.Ready
+                }
 
                 Rectangle {
-                    x: 1
-                    y: 4
-                    width: parent.width - 2
-                    height: 1
-                    color: root.theme.foreground
+                    anchors.centerIn: parent
+                    width: 16 * root.chromeScale
+                    height: 13 * root.chromeScale
+                    radius: 2 * root.chromeScale
+                    color: "transparent"
+                    border.width: Math.min(1, root.chromeScale)
+                    border.color: root.theme.overviewText
+                    visible: !appIcon.visible
+
+                    Rectangle {
+                        x: root.chromeScale
+                        y: 4 * root.chromeScale
+                        width: Math.max(0, parent.width - 2 * root.chromeScale)
+                        height: root.chromeScale
+                        color: root.theme.overviewText
+                    }
                 }
             }
-        }
 
-        Text {
-            anchors.left: icon.right
-            anchors.right: parent.right
-            anchors.leftMargin: 8 * root.chromeScale
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.title
-            textFormat: Text.PlainText
-            color: root.theme.foreground
-            font.pixelSize: Math.max(1, 14 * root.chromeScale)
-            elide: Text.ElideRight
-            maximumLineCount: 1
+            Text {
+                id: titleLabel
+                x: icon.x + icon.width + 6 * root.chromeScale
+                width: Math.max(0, badge.width - x - 11 * root.chromeScale)
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.title
+                textFormat: Text.PlainText
+                color: root.theme.overviewText
+                font.pixelSize: Math.max(1, 13 * root.chromeScale)
+                elide: Text.ElideRight
+                maximumLineCount: 1
+            }
         }
-    }
-
-    Rectangle {
-        anchors.fill: parent
-        radius: 12
-        color: "transparent"
-        border.width: root.selected || hover.hovered ? 2 : 1
-        border.color: root.selected || hover.hovered ? root.theme.accent : root.theme.muted
     }
 
     HoverHandler {
@@ -179,7 +221,7 @@ Item {
         contentItem: Text {
             text: tooltip.text
             textFormat: Text.PlainText
-            color: root.theme.foreground
+            color: root.theme.overviewText
             font.pixelSize: 14
             wrapMode: Text.Wrap
         }

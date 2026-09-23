@@ -10,8 +10,18 @@ QtObject {
     property color accent: "#cacccc"
     property color muted: "#707880"
 
+    // Wallpaper-facing chrome stays legible independently of the app palette.
+    readonly property color overviewText: "#f5f5f7"
+    readonly property color overviewMuted: "#c0c4cc"
+    readonly property color overviewAccent: "#0a84ff"
+    property string _wallpaperPath: ""
+    readonly property url wallpaperSource: _wallpaperPath
+        ? "file://" + _wallpaperPath.split("/").map(encodeURIComponent).join("/") : ""
+
     function reload(): void {
         colorsFile.reload()
+        if (!wallpaperProcess.running)
+            wallpaperProcess.running = true
     }
 
     function loadColors(raw): void {
@@ -46,6 +56,20 @@ QtObject {
         if (!loadedForeground && color7Value.length > 0) foreground = color7Value
         if (!foundAccent && color4Value.length > 0) accent = color4Value
         if (!foundMuted && color8Value.length > 0) muted = color8Value
+    }
+
+    Component.onCompleted: reload()
+
+    // Resolve the symlink on opening, as Omarchy's background plugin does.
+    // The real path is also the image cache key, so theme changes cannot reuse
+    // a stale image under the unchanged "current/background" symlink.
+    property Process wallpaperProcess: Process {
+        command: ["readlink", "-e", Quickshell.env("HOME") + "/.local/state/omarchy/current/background"]
+        stdout: StdioCollector { id: wallpaperOutput; waitForEnd: true }
+        onExited: (exitCode, exitStatus) => {
+            root._wallpaperPath = exitCode === 0 && exitStatus === 0
+                ? wallpaperOutput.text.trim() : ""
+        }
     }
 
     property FileView colorsFile: FileView {

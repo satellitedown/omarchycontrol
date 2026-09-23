@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls as Controls
 import "OverviewModel.js" as Model
 
@@ -259,6 +260,18 @@ Item {
                     anchors.fill: parent
                     active: root.controller.opened && desktop.intersectsViewport
                     sourceComponent: Item {
+                        Image {
+                            anchors.fill: parent
+                            z: -1
+                            source: root.theme.wallpaperSource
+                            asynchronous: true
+                            fillMode: Image.PreserveAspectCrop
+                            sourceSize.width: Math.max(1,
+                                Math.min(1024, Math.ceil(canvas.width * Screen.devicePixelRatio)))
+                            sourceSize.height: Math.max(1,
+                                Math.min(1024, Math.ceil(canvas.height * Screen.devicePixelRatio)))
+                        }
+
                         Repeater {
                             model: desktop._snapshotRows
                             delegate: WindowPreview {
@@ -282,14 +295,21 @@ Item {
                     anchors.fill: parent
                     radius: canvas.radius
                     color: desktop.dropHighlighted
-                        ? Qt.rgba(root.theme.accent.r, root.theme.accent.g, root.theme.accent.b, 0.14)
+                        ? Qt.rgba(root.theme.overviewAccent.r, root.theme.overviewAccent.g,
+                            root.theme.overviewAccent.b, 0.14)
                         : "transparent"
                     border.width: desktop.dropHighlighted || desktop.keyboardSelected ? 3
-                        : desktop.currentDesktop || pointer.containsMouse ? 2 : 1
+                        : desktop.currentDesktop ? 2 : 1
                     border.color: desktop.dropHighlighted || desktop.keyboardSelected
-                        || desktop.currentDesktop || pointer.containsMouse
-                        ? root.theme.accent
-                        : Qt.rgba(root.theme.muted.r, root.theme.muted.g, root.theme.muted.b, 0.45)
+                        || desktop.currentDesktop
+                        ? root.theme.overviewAccent
+                        : Qt.rgba(1, 1, 1, pointer.containsMouse ? 0.6 : 0.24)
+                    Behavior on color {
+                        ColorAnimation { duration: 100; easing.type: Easing.OutQuad }
+                    }
+                    Behavior on border.color {
+                        ColorAnimation { duration: 100; easing.type: Easing.OutQuad }
+                    }
                 }
             }
 
@@ -301,10 +321,9 @@ Item {
                 height: 20
                 text: desktop.label
                 textFormat: Text.PlainText
-                color: desktop.currentDesktop || desktop.keyboardSelected
-                    ? root.theme.foreground : root.theme.muted
+                color: root.theme.overviewText
                 font.pixelSize: 14
-                font.bold: desktop.currentDesktop || desktop.keyboardSelected
+                font.weight: Font.Medium
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight

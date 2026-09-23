@@ -84,30 +84,47 @@ PanelWindow {
         focus: true
         Component.onCompleted: forceActiveFocus()
         Keys.onPressed: event => panel.key(event)
-        Rectangle { anchors.fill: parent; color: Qt.alpha(panel.theme.background, 0.94) }
+        Rectangle { anchors.fill: parent; color: panel.theme.background }
+        Image {
+            anchors.fill: parent
+            source: panel.theme.wallpaperSource
+            sourceSize: Qt.size(Math.ceil(width * Screen.devicePixelRatio),
+                                Math.ceil(height * Screen.devicePixelRatio))
+            fillMode: Image.PreserveAspectCrop
+            asynchronous: true
+            cache: true
+        }
+        // Keep the actual wallpaper's color and detail, not a gray blur pass.
+        Rectangle { anchors.fill: parent; color: "#26000000" }
         MouseArea { anchors.fill: parent; onClicked: { if (panel.dragging) panel.cancelDrag(); else panel.controller.hide() } }
         Item {
             id: content
             anchors.fill: parent
-            opacity: 0; scale: 0.97
+            opacity: 0; scale: 0.985
             Component.onCompleted: entrance.start()
             ParallelAnimation {
                 id: entrance
-                NumberAnimation { target: content; property: "opacity"; to: 1; duration: 150 }
-                NumberAnimation { target: content; property: "scale"; to: 1; duration: 150; easing.type: Easing.OutCubic }
+                NumberAnimation { target: content; property: "opacity"; to: 1; duration: 160; easing.type: Easing.OutCubic }
+                NumberAnimation { target: content; property: "scale"; to: 1; duration: 180; easing.type: Easing.OutCubic }
+            }
+            Rectangle {
+                width: parent.width
+                height: strip.y + strip.height + 18
+                color: "#66000000"
+                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#18ffffff" }
             }
             WorkspaceStrip {
                 id: strip
-                x: 32; y: 32; width: parent.width - 64
-                height: Math.max(112,Math.min(180,parent.height*0.16))
+                x: 40; y: 24; width: Math.max(0, parent.width - 80)
+                height: Math.max(112,Math.min(164,parent.height*0.125))
                 controller: panel.controller; theme: panel.theme
                 dragSource: dragVisual; dragActive: panel.dragging
                 onMoveRequested: (address, workspaceId) => panel.controller.moveWindow(address,workspaceId)
             }
             Item {
                 id: grid
-                x: 32; y: strip.y + strip.height + 24
-                width: Math.max(0,parent.width - 64); height: Math.max(0,parent.height - y - 64)
+                x: 40; y: strip.y + strip.height + 42
+                width: Math.max(0,parent.width - 80); height: Math.max(0,parent.height - y - 64)
                 // Only geometry/membership changes repack; title/focus updates do not.
                 readonly property string geometryKey: {
                     const revision = panel.controller.revision;
@@ -151,12 +168,30 @@ PanelWindow {
                         }
                     }
                 }
-                Text { anchors.centerIn: parent; visible: panel.controller.windowModel.count === 0; text: "No windows on this desktop"; color: panel.theme.foreground; font.pixelSize: 24 }
+                Text {
+                    anchors.centerIn: parent
+                    visible: panel.controller.windowModel.count === 0
+                    text: "No windows on this desktop"
+                    color: panel.theme.overviewText
+                    font.pixelSize: 24
+                    style: Text.Outline; styleColor: "#66000000"
+                }
             }
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 22
-                text: panel.controller.errorMessage || "Select a window · Drag to another desktop · Esc to cancel"
-                textFormat: Text.PlainText; color: panel.theme.foreground; font.pixelSize: 14
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom; anchors.bottomMargin: 18
+                width: Math.min(parent.width - 32, hint.implicitWidth + 28)
+                height: 28; radius: 14; color: "#80000000"
+                Text {
+                    id: hint
+                    anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 14
+                    text: panel.controller.errorMessage || "Select a window · Drag to another desktop · Esc to cancel"
+                    textFormat: Text.PlainText
+                    color: panel.controller.errorMessage ? panel.theme.overviewText : panel.theme.overviewMuted
+                    font.pixelSize: 12
+                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
             }
         }
         Rectangle {
@@ -166,7 +201,7 @@ PanelWindow {
             z: 100; width: 240; height: 160
             visible: panel.dragging
             color: panel.theme.background; radius: 8
-            border.color: panel.theme.accent; border.width: 3
+            border.color: panel.theme.overviewAccent; border.width: 2
             Drag.active: panel.dragging
             Drag.source: dragVisual
             Drag.keys: ["omarchycontrol-window"]
