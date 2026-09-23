@@ -100,6 +100,11 @@ Item {
         paintCursor: false
         live: root.live
         visible: root.hasContent
+        // Quickshell 0.3.1 imports OpenGL DMA-BUF textures without declaring
+        // their alpha channel. Composite through an RGBA layer so translucent
+        // clients blend with the overview, not punch through to real windows.
+        // This target is preview-sized and disappears with the capture.
+        layer.enabled: root.hasContent
     }
 
     Connections {
