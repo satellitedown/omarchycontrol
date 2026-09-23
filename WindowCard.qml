@@ -18,6 +18,7 @@ Item {
     readonly property bool previewReady: preview.hasContent
 
     signal activated()
+    signal hoverChanged(bool hovered)
     signal dragStarted(real x, real y)
     signal dragMoved(real x, real y)
     signal dragFinished()
@@ -98,7 +99,9 @@ Item {
         color: "transparent"
         border.width: 2 * root.chromeScale
         border.color: root.theme.overviewAccent
-        opacity: root.chromeOpacity * (root.selected ? 1 : (hover.hovered ? 0.75 : 0))
+        // The caller decides which single card is highlighted, so a hovered
+        // card never competes with the keyboard selection.
+        opacity: root.chromeOpacity * (root.selected ? 1 : 0)
         visible: preview.width > 0 && preview.height > 0
 
         Behavior on opacity {
@@ -183,6 +186,7 @@ Item {
         id: hover
         enabled: root.interactive
         cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+        onHoveredChanged: root.hoverChanged(hovered)
     }
 
     TapHandler {

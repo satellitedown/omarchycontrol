@@ -57,6 +57,9 @@ PanelWindow {
     }
     function select(kind, index) {
         const c = controller;
+        // Keyboard navigation takes the highlight back from a parked pointer,
+        // so the moved selection is always the card that looks selected.
+        surface.hoveredAddress = "";
         if (kind === "workspace" && c.workspaceModel.count) {
             c.selectionKind = kind;
             c.selectedWorkspaceId = c.workspaceModel.get(Math.max(0, Math.min(index, c.workspaceModel.count - 1))).workspaceId;
@@ -115,6 +118,15 @@ PanelWindow {
         property real chromeProgress: 0
         property bool framesReady: false
         property int warmFrames: 0
+        // Exactly one card is highlighted: the hovered card while the pointer
+        // rests on one, otherwise the keyboard selection.
+        property string hoveredAddress: ""
+        function setHover(address, hovered) {
+            if (hovered)
+                hoveredAddress = address;
+            else if (hoveredAddress === address)
+                hoveredAddress = "";
+        }
         // Readiness is the decoded image, not the symlink lookup. Waiting on
         // that process added ~100 ms of dead time before every entrance.
         readonly property bool wallpaperReady: wallpaper.status === Image.Ready
@@ -295,7 +307,10 @@ PanelWindow {
                         onPreviewReadyChanged: Qt.callLater(surface.tryStartEntrance)
                         controller: panel.controller; theme: panel.theme
                         address: model.address; toplevel: model.toplevel
-                        selected: panel.controller.selectionKind === "window" && panel.controller.selectedAddress === address
+                        selected: surface.hoveredAddress.length
+                            ? surface.hoveredAddress === address
+                            : panel.controller.selectionKind === "window" && panel.controller.selectedAddress === address
+                        onHoverChanged: hovered => surface.setHover(address, hovered)
                         onActivated: panel.controller.activateWindow(address)
                         onDragStarted: (x,y) => {
                             panel.dragCanceled = false;
