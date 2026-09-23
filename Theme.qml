@@ -62,13 +62,16 @@ QtObject {
 
     // Resolve the symlink on opening, as Omarchy's background plugin does.
     // The real path is also the image cache key, so theme changes cannot reuse
-    // a stale image under the unchanged "current/background" symlink.
+    // a stale image under the unchanged "current/background" symlink. Re-assign
+    // only on a real change: an identical URL would restart decoding and stall
+    // the entrance animation on a fresh frame.
     property Process wallpaperProcess: Process {
         command: ["readlink", "-e", Quickshell.env("HOME") + "/.local/state/omarchy/current/background"]
         stdout: StdioCollector { id: wallpaperOutput; waitForEnd: true }
         onExited: (exitCode, exitStatus) => {
-            root._wallpaperPath = exitCode === 0 && exitStatus === 0
-                ? wallpaperOutput.text.trim() : ""
+            const path = exitCode === 0 && exitStatus === 0 ? wallpaperOutput.text.trim() : ""
+            if (path !== root._wallpaperPath)
+                root._wallpaperPath = path
         }
     }
 

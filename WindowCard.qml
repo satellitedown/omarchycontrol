@@ -11,6 +11,11 @@ Item {
     required property string address
     property bool selected: false
     property real chromeScale: 1
+    property real chromeOpacity: 1
+    // Dragging tracks the pointer against final geometry, so it waits until
+    // the placement motion ends. Activation stays available throughout.
+    property bool settled: true
+    readonly property bool previewReady: preview.hasContent
 
     signal activated()
     signal dragStarted(real x, real y)
@@ -47,6 +52,7 @@ Item {
         height: preview.height + 3 * root.chromeScale
         radius: 7 * root.chromeScale
         color: "#18000000"
+        opacity: root.chromeOpacity
         visible: preview.width > 0 && preview.height > 0
     }
 
@@ -57,6 +63,7 @@ Item {
         height: preview.height + root.chromeScale
         radius: 4 * root.chromeScale
         color: "#30000000"
+        opacity: root.chromeOpacity
         visible: preview.width > 0 && preview.height > 0
     }
 
@@ -78,6 +85,7 @@ Item {
     Rectangle {
         anchors.fill: preview
         color: "transparent"
+        opacity: root.chromeOpacity
         border.width: Math.min(1, root.chromeScale)
         border.color: "#38ffffff"
         visible: preview.width > 0 && preview.height > 0
@@ -90,7 +98,7 @@ Item {
         color: "transparent"
         border.width: 2 * root.chromeScale
         border.color: root.theme.overviewAccent
-        opacity: root.selected ? 1 : (hover.hovered ? 0.75 : 0)
+        opacity: root.chromeOpacity * (root.selected ? 1 : (hover.hovered ? 0.75 : 0))
         visible: preview.width > 0 && preview.height > 0
 
         Behavior on opacity {
@@ -107,6 +115,7 @@ Item {
         anchors.rightMargin: 6 * root.chromeScale
         height: Math.max(0, Math.min(32 * root.chromeScale, root.height))
         clip: true
+        opacity: root.chromeOpacity
 
         Rectangle {
             id: badge
@@ -194,7 +203,7 @@ Item {
 
     DragHandler {
         id: drag
-        enabled: root.interactive
+        enabled: root.interactive && root.settled
         target: null
         acceptedButtons: Qt.LeftButton
         dragThreshold: 8

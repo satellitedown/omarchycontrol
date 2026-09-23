@@ -9,6 +9,7 @@ Item {
     id: root
 
     property bool opened: false
+    property bool closing: false
     property string targetMonitorName: ""
     property var targetMonitor: null
     property var targetScreen: null
@@ -18,10 +19,11 @@ Item {
     property int selectedWorkspaceId: 0
     property string selectionKind: "workspace"
     property string errorMessage: ""
-    readonly property bool busy: _action !== null
+    readonly property bool busy: closing || _action !== null
     property int revision: 0
 
     signal cancelDrag()
+    signal closeRequested()
 
     property int _activeWorkspaceId: 0
     property string _openingAddress: ""
@@ -136,6 +138,7 @@ Item {
         selectionKind = "workspace";
         _selectionPending = !!_openingAddress;
         errorMessage = message;
+        closing = false;
         opened = true;
         _reconciling = false;
         refresh();
@@ -148,14 +151,13 @@ Item {
     }
 
     function hide() {
-        if (!opened)
+        if (!opened || closing)
             return;
         const movingOpeningWindow = _action && _action.kind === "move"
                 && _action.address === _openingAddress
                 && _action.workspaceId !== _openingWorkspaceId;
         _pendingRestore = _openingWindowMoved || movingOpeningWindow ? null : _restoreContext();
-        _close();
-        Qt.callLater(_restoreFocus);
+        _requestClose();
     }
 
     function toggle() {
@@ -165,10 +167,24 @@ Item {
             show();
     }
 
-    function _close() {
+    function _requestClose() {
+        if (!opened || closing)
+            return;
+        cancelDrag();
+        closing = true;
+        closeGuard.restart();
+        closeRequested();
+    }
+
+    // Called after the exit motion, or immediately when its output disappears.
+    function finishClose() {
+        if (!opened)
+            return;
+        closeGuard.stop();
         cancelDrag();
         refreshTimer.stop();
         opened = false;
+        closing = false;
         _reconcileQueued = false;
         _selectionPending = false;
         _openingRefreshPending = false;
@@ -178,6 +194,9 @@ Item {
         _snapshotHandles = ({});
         targetMonitor = null;
         targetScreen = null;
+        // Only now is it safe to hand focus back to a real client.
+        Qt.callLater(_dispatchAction);
+        Qt.callLater(_restoreFocus);
     }
 
     function _checkTarget() {
@@ -187,7 +206,7 @@ Item {
         const screen = _screenByName(targetMonitorName);
         if (!monitor || !screen) {
             _pendingRestore = null;
-            _close();
+            finishClose();
             return false;
         }
         targetMonitor = monitor;
@@ -477,9 +496,9 @@ Item {
         _action = { kind: kind, address: address, workspaceId: workspaceId,
             monitorName: targetMonitorName, restoreContext: _restoreContext(), launched: false };
         if (kind === "window" || kind === "workspace")
-            _close();
-        // Allow the layer surface to unmap and relinquish exclusive focus first.
-        Qt.callLater(_dispatchAction);
+            _requestClose();
+        else
+            Qt.callLater(_dispatchAction);
     }
 
     function _canRestore(context) {
@@ -509,7 +528,7 @@ Item {
 
     function _dispatchAction() {
         const action = _action;
-        if (!action || action.launched)
+        if (!action || action.launched || (opened && action.kind !== "move"))
             return;
         const monitor = _monitorByName(action.monitorName);
         const toplevel = action.kind === "workspace" ? null : _availableWindow(action.address, monitor);
@@ -606,6 +625,15 @@ Item {
         onTriggered: root.refresh()
     }
 
+    // The overlay owns the exit motion and reports back when it finishes. This
+    // bound keeps a missing or wedged overlay from leaving the controller open.
+    Timer {
+        id: closeGuard
+        interval: 700
+        repeat: false
+        onTriggered: root.finishClose()
+    }
+
     Connections {
         target: Hyprland
         enabled: root.opened
@@ -613,14 +641,14 @@ Item {
             const name = event.name;
             if (name === "monitorremoved" && event.data === root.targetMonitorName) {
                 root._pendingRestore = null;
-                root._close();
+                root.finishClose();
                 return;
             }
             if (name === "monitorremovedv2") {
                 const parts = event.parse(3);
                 if (parts[1] === root.targetMonitorName) {
                     root._pendingRestore = null;
-                    root._close();
+                    root.finishClose();
                     return;
                 }
             }

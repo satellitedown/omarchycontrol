@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import "OverviewModel.js" as Model
 PanelWindow {
     id: panel
@@ -8,6 +9,27 @@ PanelWindow {
     required property var theme
     screen: controller.targetScreen
     visible: controller.opened
+
+    // Decode the wallpaper at the output's physical resolution, resolved
+    // before first use. A size that changes when the layer maps restarts
+    // decoding and stalls the entrance on a fresh frame. The long edge is
+    // capped because the compositor re-decodes on every mapping, and a
+    // full 3840x2160 PNG costs ~150 ms while staying visually identical
+    // behind the dim overlay.
+    readonly property int wallpaperDecodeLimit: 2560
+    property size wallpaperDecodeSize: Qt.size(0, 0)
+    function syncWallpaperDecodeSize() {
+        const monitor = panel.controller.targetMonitor || Hyprland.focusedMonitor;
+        if (!monitor || !(monitor.width > 0) || !(monitor.height > 0))
+            return;
+        const longest = Math.max(monitor.width, monitor.height);
+        const scale = Math.min(1, wallpaperDecodeLimit / longest);
+        const width = Math.max(1, Math.round(monitor.width * scale));
+        const height = Math.max(1, Math.round(monitor.height * scale));
+        if (width !== wallpaperDecodeSize.width || height !== wallpaperDecodeSize.height)
+            wallpaperDecodeSize = Qt.size(width, height);
+    }
+    Component.onCompleted: syncWallpaperDecodeSize()
     anchors { top: true; bottom: true; left: true; right: true }
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "omarchycontrol"
@@ -45,6 +67,7 @@ PanelWindow {
     }
     function key(event) {
         const c = controller;
+        if (c.closing) { event.accepted = true; return; }
         const nw = c.workspaceModel.count, nc = c.windowModel.count;
         let index = c.selectionKind === "window" ? indexOf(c.windowModel,"address",c.selectedAddress) : indexOf(c.workspaceModel,"workspaceId",c.selectedWorkspaceId);
         if (event.key === Qt.Key_Escape) {
@@ -76,38 +99,129 @@ PanelWindow {
         } else return;
         event.accepted = true;
     }
-    Connections { target: panel.controller; function onCancelDrag() { panel.cancelDrag() } }
+    Connections {
+        target: panel.controller
+        function onCancelDrag() { panel.cancelDrag() }
+        function onCloseRequested() { surface.close() }
+        function onOpenedChanged() { if (panel.controller.opened) surface.open() }
+    }
     Item {
         id: surface
         objectName: "overviewSurface"
         anchors.fill: parent
         focus: true
-        Component.onCompleted: forceActiveFocus()
-        Keys.onPressed: event => panel.key(event)
-        Rectangle { anchors.fill: parent; color: panel.theme.background }
-        Image {
-            anchors.fill: parent
-            source: panel.theme.wallpaperSource
-            sourceSize: Qt.size(Math.ceil(width * Screen.devicePixelRatio),
-                                Math.ceil(height * Screen.devicePixelRatio))
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: true
+        property real entranceProgress: 0
+        property bool entranceStarted: false
+        property real chromeProgress: 0
+        property bool framesReady: false
+        property int warmFrames: 0
+        // Readiness is the decoded image, not the symlink lookup. Waiting on
+        // that process added ~100 ms of dead time before every entrance.
+        readonly property bool wallpaperReady: wallpaper.status === Image.Ready
+            || wallpaper.status === Image.Error
+            || !String(panel.theme.wallpaperSource).length
+        readonly property bool sceneReady: framesReady && wallpaperReady
+        function startEntrance() {
+            if (entranceStarted || panel.controller.closing) return;
+            entranceStarted = true;
+            captureDeadline.stop();
+            entrance.start();
+            // Chrome uses the same reveal, so nothing is drawn over the live
+            // desktop while the layer surface is still producing its first frame.
+            chromeAnimation.start();
         }
-        // Keep the actual wallpaper's color and detail, not a gray blur pass.
-        Rectangle { anchors.fill: parent; color: "#26000000" }
+        function close() {
+            captureDeadline.stop();
+            entrance.stop();
+            chromeAnimation.stop();
+            if (entranceProgress === 0) {
+                Qt.callLater(panel.controller.finishClose);
+                return;
+            }
+            entrance.to = 0;
+            entrance.duration = Math.max(80, 240 * entranceProgress);
+            chromeAnimation.to = 0;
+            chromeAnimation.duration = entrance.duration;
+            chromeAnimation.start();
+            entrance.start();
+        }
+        function tryStartEntrance() {
+            if (entranceStarted || !cards.count) return;
+            for (let i = 0; i < cards.count; ++i) {
+                const card = cards.itemAt(i);
+                if (!card || !card.previewReady || card.width <= 0 || card.height <= 0) return;
+            }
+            framesReady = true;
+        }
+        function open() {
+            panel.syncWallpaperDecodeSize();
+            entrance.stop();
+            chromeAnimation.stop();
+            entranceProgress = 0;
+            chromeProgress = 0;
+            entranceStarted = false;
+            framesReady = false;
+            warmFrames = 0;
+            entrance.to = 1;
+            entrance.duration = 300;
+            chromeAnimation.to = 1;
+            chromeAnimation.duration = 160;
+            forceActiveFocus();
+            if (panel.controller.closing) { close(); return; }
+            captureDeadline.start();
+            Qt.callLater(tryStartEntrance);
+        }
+        Component.onCompleted: if (panel.controller.opened) open()
+        // Render the prepared scene at desktop positions before moving it.
+        // hasContent precedes GPU import; hidden/zero-opacity items stay cold.
+        FrameAnimation {
+            running: panel.controller.opened && !surface.entranceStarted && !panel.controller.closing
+            onTriggered: {
+                if (surface.sceneReady && ++surface.warmFrames >= 2)
+                    surface.startEntrance();
+            }
+        }
+        // Unavailable captures must not stall the overview. Wallpaper decoding
+        // is gated separately: never substitute a gray frame while it loads.
+        Timer { id: captureDeadline; interval: 80; onTriggered: surface.framesReady = true }
+        NumberAnimation {
+            id: entrance
+            target: surface; property: "entranceProgress"
+            to: 1; duration: 300; easing.type: Easing.InOutCubic
+            onFinished: if (panel.controller.closing) Qt.callLater(panel.controller.finishClose)
+        }
+        NumberAnimation {
+            id: chromeAnimation
+            target: surface; property: "chromeProgress"
+            to: 1; duration: 160; easing.type: Easing.OutCubic
+        }
+        Keys.onPressed: event => panel.key(event)
+        // The container stays visible so the decoded wallpaper is never
+        // released; hiding an Image makes it reload and re-decode on the next
+        // opening, which stalled the entrance for ~300 ms.
+        Item {
+            anchors.fill: parent
+            readonly property real shown: surface.sceneReady || surface.entranceStarted ? 1 : 0
+            Rectangle { anchors.fill: parent; color: panel.theme.background; opacity: parent.shown }
+            Image {
+                id: wallpaper
+                anchors.fill: parent
+                source: panel.theme.wallpaperSource
+                sourceSize: panel.wallpaperDecodeSize
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                cache: true
+                opacity: parent.shown
+            }
+            // Dim the wallpaper as the windows settle, without a blur pass.
+            Rectangle { anchors.fill: parent; color: "#26000000"; opacity: surface.entranceProgress }
+        }
         MouseArea { anchors.fill: parent; onClicked: { if (panel.dragging) panel.cancelDrag(); else panel.controller.hide() } }
         Item {
             id: content
             anchors.fill: parent
-            opacity: 0; scale: 0.985
-            Component.onCompleted: entrance.start()
-            ParallelAnimation {
-                id: entrance
-                NumberAnimation { target: content; property: "opacity"; to: 1; duration: 160; easing.type: Easing.OutCubic }
-                NumberAnimation { target: content; property: "scale"; to: 1; duration: 180; easing.type: Easing.OutCubic }
-            }
             Rectangle {
+                z: 2; opacity: surface.chromeProgress
                 width: parent.width
                 height: strip.y + strip.height + 18
                 color: "#66000000"
@@ -115,6 +229,8 @@ PanelWindow {
             }
             WorkspaceStrip {
                 id: strip
+                z: 3; opacity: surface.chromeProgress
+                transform: Translate { y: -16 * (1 - surface.chromeProgress) }
                 x: 40; y: 24; width: Math.max(0, parent.width - 80)
                 height: Math.max(112,Math.min(164,parent.height*0.125))
                 controller: panel.controller; theme: panel.theme
@@ -143,6 +259,8 @@ PanelWindow {
                     width: panel.width, height: panel.height
                 })
                 Repeater {
+                    id: cards
+                    onItemAdded: Qt.callLater(surface.tryStartEntrance)
                     model: panel.controller.windowModel
                     delegate: WindowCard {
                         id: card
@@ -151,6 +269,30 @@ PanelWindow {
                         readonly property var cell: grid.layout[index] || ({ x: 0, y: 0, width: 0, height: 0, chromeScale: 1 })
                         x: cell.x; y: cell.y; width: cell.width; height: cell.height
                         chromeScale: cell.chromeScale
+                        settled: surface.entranceProgress === 1
+                        readonly property bool hasOrigin: Model.hasGeometry(ipc) && width > 12 * chromeScale
+                        readonly property real sourceScale: hasOrigin ? ipc.size[0] / (width - 12 * chromeScale) : 0.96
+                        readonly property real sourceX: hasOrigin
+                            ? ipc.at[0] - (panel.controller.targetMonitor ? panel.controller.targetMonitor.x : 0) - grid.x - x - 6 * chromeScale : 0
+                        readonly property real sourceY: hasOrigin
+                            ? ipc.at[1] - (panel.controller.targetMonitor ? panel.controller.targetMonitor.y : 0) - grid.y - y - 6 * chromeScale : 16
+                        // Animate transforms, not layout/capture dimensions. The
+                        // preview's top-left starts at the real client position.
+                        transform: [
+                            Scale {
+                                origin.x: 6 * card.chromeScale; origin.y: 6 * card.chromeScale
+                                xScale: 1 + (card.sourceScale - 1) * (1 - surface.entranceProgress)
+                                yScale: xScale
+                            },
+                            Translate {
+                                x: card.sourceX * (1 - surface.entranceProgress)
+                                y: card.sourceY * (1 - surface.entranceProgress)
+                            }
+                        ]
+                        opacity: hasOrigin ? (previewReady || surface.entranceStarted ? 1 : 0) : surface.entranceProgress
+                        z: surface.entranceProgress < 1 ? -Math.max(0, Number(ipc.focusHistoryID) || 0) : 0
+                        chromeOpacity: Math.max(0, (surface.entranceProgress - 0.35) / 0.65)
+                        onPreviewReadyChanged: Qt.callLater(surface.tryStartEntrance)
                         controller: panel.controller; theme: panel.theme
                         address: model.address; toplevel: model.toplevel
                         selected: panel.controller.selectionKind === "window" && panel.controller.selectedAddress === address
@@ -178,6 +320,7 @@ PanelWindow {
                 }
             }
             Rectangle {
+                z: 3; opacity: surface.chromeProgress
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom; anchors.bottomMargin: 18
                 width: Math.min(parent.width - 32, hint.implicitWidth + 28)
