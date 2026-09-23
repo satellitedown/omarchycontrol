@@ -12,3 +12,5 @@ Mission Control for Omarchy. See your windows, find the one you want, and bring 
 One shortcut. All your windows. Less hunting.
 
 Built for Hyprland with Quickshell. Press **Ctrl+↑** to toggle Mission Control, just like on macOS.
+
+Companion desktop shortcuts: **Ctrl+←** and **Ctrl+→** slide between desktops.
