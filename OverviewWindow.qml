@@ -13,6 +13,12 @@ PanelWindow {
     // every opening. While closed the surface accepts no input and draws
     // nothing, so the desktop behaves exactly as before.
     visible: true
+    // The compositor closes the layer surface when its output goes away
+    // (monitor sleep or unplug), and Quickshell then leaves the window hidden.
+    // Map it again whenever outputs change; callLater lets the screen binding
+    // above settle on a live output first.
+    function remap() { if (!visible) visible = true; }
+    Connections { target: Quickshell; function onScreensChanged() { Qt.callLater(panel.remap) } }
     mask: controller.opened ? openMask : closedMask
     Region { id: closedMask }
     Region { id: openMask; item: surface }
