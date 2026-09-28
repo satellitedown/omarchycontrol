@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Window
 import QtQuick.Controls as Controls
 import QtQuick.Effects
 import "OverviewModel.js" as Model
@@ -9,6 +8,9 @@ Item {
 
     required property var controller
     required property var theme
+    // The overlay's screen. It stays put while closed, so thumbnail sizes,
+    // and the wallpaper decode sized from them, hold between openings.
+    property var screen: null
     property Item dragSource: null
     property bool dragActive: false
 
@@ -16,15 +18,16 @@ Item {
 
     objectName: "workspaceStrip"
 
-    readonly property real screenWidth: controller.targetScreen
-        ? Math.max(1, controller.targetScreen.width) : 16
-    readonly property real screenHeight: controller.targetScreen
-        ? Math.max(1, controller.targetScreen.height) : 9
+    readonly property real screenWidth: screen ? Math.max(1, screen.width) : 16
+    readonly property real screenHeight: screen ? Math.max(1, screen.height) : 9
     readonly property real monitorX: controller.targetMonitor ? controller.targetMonitor.x : 0
     readonly property real monitorY: controller.targetMonitor ? controller.targetMonitor.y : 0
     readonly property real thumbnailWidth: Math.max(0,
         Math.min(width, Math.max(0, height - 30) * screenWidth / screenHeight))
     readonly property real thumbnailHeight: thumbnailWidth * screenHeight / screenWidth
+    readonly property real thumbnailRadius: 6
+    // Logical size; Qt applies the device pixel ratio to sourceSize itself.
+    readonly property size wallpaperSize: Qt.size(Math.ceil(thumbnailWidth), Math.ceil(thumbnailHeight))
     readonly property int activeWorkspaceId: controller.targetMonitor
         && controller.targetMonitor.activeWorkspace ? controller.targetMonitor.activeWorkspace.id : 0
 
@@ -146,6 +149,29 @@ Item {
         }
     }
 
+    // Thumbnails share one small decode. Their delegates are rebuilt on every
+    // opening; this holder keeps the decode cached in between instead of
+    // re-reading the wallpaper file each time.
+    Image {
+        id: thumbnailWallpaper
+        visible: false
+        source: root.wallpaperSize.width > 0 && root.wallpaperSize.height > 0
+            ? root.theme.wallpaperSource : ""
+        sourceSize: root.wallpaperSize
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+    }
+
+    // One rounded mask for every thumbnail; they share a size and radius.
+    Rectangle {
+        id: thumbnailMask
+        width: root.thumbnailWidth
+        height: root.thumbnailHeight
+        radius: root.thumbnailRadius
+        visible: false
+        layer.enabled: true
+    }
+
     ListView {
         id: desktops
 
@@ -249,38 +275,21 @@ Item {
             Accessible.focused: keyboardSelected
             Accessible.onPressAction: activate()
 
-            Rectangle {
+            Item {
                 id: canvas
                 width: desktop.width
                 height: root.thumbnailHeight
-                color: "transparent"
-                radius: 6
-                clip: true
-                Rectangle {
-                    id: canvasMask
-                    width: canvas.width
-                    height: canvas.height
-                    radius: canvas.radius
-                    visible: false
-                    layer.enabled: true
-                }
-                // Clipping alone cuts a rectangle, so the wallpaper and the
-                // miniature windows would spill past the rounded border.
+                // The layer bounds the content to the canvas; the mask rounds
+                // its corners, which a clip rectangle cannot.
                 layer.enabled: true
-                layer.effect: MultiEffect { maskEnabled: true; maskSource: canvasMask }
+                layer.effect: MultiEffect { maskEnabled: true; maskSource: thumbnailMask }
 
-                // Outside the viewport-gated loader: one shared decode that
-                // stays resident instead of reloading on every opening.
                 Image {
                     anchors.fill: parent
-                    source: root.theme.wallpaperSource
-                    asynchronous: true
-                    cache: true
+                    source: thumbnailWallpaper.source
+                    sourceSize: root.wallpaperSize
                     fillMode: Image.PreserveAspectCrop
-                    sourceSize.width: Math.max(1,
-                        Math.min(1024, Math.ceil(canvas.width * Screen.devicePixelRatio)))
-                    sourceSize.height: Math.max(1,
-                        Math.min(1024, Math.ceil(canvas.height * Screen.devicePixelRatio)))
+                    asynchronous: true
                 }
 
                 Loader {
@@ -293,38 +302,40 @@ Item {
                                 required property var modelData
                                 toplevel: modelData.toplevel
                                 live: false
+                                compact: true
                                 readonly property var rect: Model.miniatureRect(modelData,
                                     root.monitorX, root.monitorY,
                                     canvas.width / root.screenWidth, canvas.height / root.screenHeight)
                                 x: rect.x; y: rect.y; width: rect.width; height: rect.height
                                 z: desktop._stacking[modelData.address] || 0
                                 backgroundColor: root.theme.background
-                                foregroundColor: root.theme.foreground
-                                mutedColor: root.theme.muted
                             }
                         }
                     }
                 }
+            }
 
-                Rectangle {
-                    anchors.fill: parent
-                    radius: canvas.radius
-                    color: desktop.dropHighlighted
-                        ? Qt.rgba(root.theme.overviewAccent.r, root.theme.overviewAccent.g,
-                            root.theme.overviewAccent.b, 0.14)
-                        : "transparent"
-                    border.width: desktop.dropHighlighted || desktop.keyboardSelected ? 3
-                        : desktop.currentDesktop ? 2 : 1
-                    border.color: desktop.dropHighlighted || desktop.keyboardSelected
-                        || desktop.currentDesktop
-                        ? root.theme.overviewAccent
-                        : Qt.rgba(1, 1, 1, pointer.containsMouse ? 0.6 : 0.24)
-                    Behavior on color {
-                        ColorAnimation { duration: 100; easing.type: Easing.OutQuad }
-                    }
-                    Behavior on border.color {
-                        ColorAnimation { duration: 100; easing.type: Easing.OutQuad }
-                    }
+            // Outside the masked layer: hover, selection, and drop feedback
+            // repaint this outline, not the thumbnail and its mask pass.
+            Rectangle {
+                width: canvas.width
+                height: canvas.height
+                radius: root.thumbnailRadius
+                color: desktop.dropHighlighted
+                    ? Qt.rgba(root.theme.overviewAccent.r, root.theme.overviewAccent.g,
+                        root.theme.overviewAccent.b, 0.14)
+                    : "transparent"
+                border.width: desktop.dropHighlighted || desktop.keyboardSelected ? 3
+                    : desktop.currentDesktop ? 2 : 1
+                border.color: desktop.dropHighlighted || desktop.keyboardSelected
+                    || desktop.currentDesktop
+                    ? root.theme.overviewAccent
+                    : Qt.rgba(1, 1, 1, pointer.containsMouse ? 0.6 : 0.24)
+                Behavior on color {
+                    ColorAnimation { duration: 100; easing.type: Easing.OutQuad }
+                }
+                Behavior on border.color {
+                    ColorAnimation { duration: 100; easing.type: Easing.OutQuad }
                 }
             }
 
@@ -357,18 +368,25 @@ Item {
                 onClicked: desktop.activate()
             }
 
-            Controls.ToolTip {
-                visible: pointer.containsMouse && workspaceLabel.truncated && !root.dragActive
-                delay: 600
-                contentItem: Text {
-                    text: desktop.label
-                    textFormat: Text.PlainText
-                    color: root.theme.foreground
-                }
-                background: Rectangle {
-                    color: root.theme.background
-                    border.color: root.theme.muted
-                    radius: 4
+            // Created on hover only, and only for a truncated label.
+            Loader {
+                anchors.fill: parent
+                active: pointer.containsMouse && workspaceLabel.truncated && !root.dragActive
+                sourceComponent: Item {
+                    Controls.ToolTip {
+                        visible: true
+                        delay: 600
+                        contentItem: Text {
+                            text: desktop.label
+                            textFormat: Text.PlainText
+                            color: root.theme.foreground
+                        }
+                        background: Rectangle {
+                            color: root.theme.background
+                            border.color: root.theme.muted
+                            radius: 4
+                        }
+                    }
                 }
             }
         }

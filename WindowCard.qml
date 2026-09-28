@@ -16,6 +16,7 @@ Item {
     // the placement motion ends. Activation stays available throughout.
     property bool settled: true
     readonly property bool previewReady: preview.hasContent
+    readonly property Item captureItem: preview.captureItem
 
     signal activated()
     signal hoverChanged(bool hovered)
@@ -77,7 +78,9 @@ Item {
         height: Math.max(0, root.height - 38 * root.chromeScale)
         toplevel: root.toplevel
         enabled: root.visible && root.controller.opened && width > 0 && height > 0
-        live: enabled
+        // Hold the frame while cards move: each live frame makes the
+        // compositor re-render the window, which the motion does not need.
+        live: enabled && root.settled
         backgroundColor: root.theme.background
         foregroundColor: root.theme.foreground
         mutedColor: root.theme.muted
@@ -225,23 +228,30 @@ Item {
         }
     }
 
-    Controls.ToolTip {
-        id: tooltip
-        visible: hover.hovered && !tap.pressed && !drag.active && root.interactive
-        delay: 600
-        text: root.title
-        width: Math.min(480, contentItem.implicitWidth + leftPadding + rightPadding)
-        contentItem: Text {
-            text: tooltip.text
-            textFormat: Text.PlainText
-            color: root.theme.overviewText
-            font.pixelSize: 14
-            wrapMode: Text.Wrap
-        }
-        background: Rectangle {
-            color: root.theme.background
-            border.color: root.theme.muted
-            radius: 6
+    // Created on hover only; a popup per card is not free at every opening.
+    Loader {
+        anchors.fill: parent
+        active: hover.hovered && !tap.pressed && !drag.active && root.interactive
+        sourceComponent: Item {
+            Controls.ToolTip {
+                id: tooltip
+                visible: true
+                delay: 600
+                text: root.title
+                width: Math.min(480, contentItem.implicitWidth + leftPadding + rightPadding)
+                contentItem: Text {
+                    text: tooltip.text
+                    textFormat: Text.PlainText
+                    color: root.theme.overviewText
+                    font.pixelSize: 14
+                    wrapMode: Text.Wrap
+                }
+                background: Rectangle {
+                    color: root.theme.background
+                    border.color: root.theme.muted
+                    radius: 6
+                }
+            }
         }
     }
 }

@@ -1,3 +1,7 @@
+// Qt sizes its texture atlas from the surface: this full-screen overlay would
+// get a 4096x4096 (64 MB) atlas at 4K for a few small icons.
+//@ pragma DefaultEnv QSG_ATLAS_WIDTH = 512
+//@ pragma DefaultEnv QSG_ATLAS_HEIGHT = 512
 import QtQuick
 import Quickshell
 import Quickshell.Io

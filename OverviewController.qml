@@ -20,6 +20,8 @@ Item {
     property string selectionKind: "workspace"
     property string errorMessage: ""
     readonly property bool busy: closing || _action !== null
+    // The window a pending activation will focus, so the exit can keep it on top.
+    readonly property string activatingAddress: _action && _action.kind === "window" ? _action.address : ""
     property int revision: 0
 
     signal cancelDrag()
@@ -495,6 +497,12 @@ Item {
         errorMessage = "";
         _action = { kind: kind, address: address, workspaceId: workspaceId,
             monitorName: targetMonitorName, restoreContext: _restoreContext(), launched: false };
+        if (kind === "window") {
+            // Raise now, under the overlay, so the real stacking already matches
+            // the card that lands on top. Focus still waits for the close.
+            Hyprland.dispatch("hl.dsp.window.alter_zorder({ mode = \"top\", window = "
+                    + Model.luaQuote("address:" + address) + " })");
+        }
         if (kind === "window" || kind === "workspace")
             _requestClose();
         else

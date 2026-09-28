@@ -7,7 +7,10 @@ PanelWindow {
     id: panel
     required property var controller
     required property var theme
-    screen: controller.targetScreen || Quickshell.screens[0]
+    // While closed, stay on the last monitor used: a screen change recreates
+    // the layer surface, and every texture with it, twice per opening.
+    property QtObject lastScreen: null
+    screen: controller.targetScreen || lastScreen || Quickshell.screens[0]
     // Stay mapped for the app's lifetime. Unmapping destroys the layer surface,
     // which drops the decoded wallpaper and re-decodes a 15 MB PNG (~110 ms) on
     // every opening. While closed the surface accepts no input and draws
@@ -23,28 +26,15 @@ PanelWindow {
     Region { id: closedMask }
     Region { id: openMask; item: surface }
 
-    // Decode once at a size that stays sharp on this output. The layer
-    // surface stays mapped, so this is not paid again on later openings.
-    readonly property int wallpaperDecodeLimit: 2560
-    property size wallpaperDecodeSize: Qt.size(0, 0)
-    function syncWallpaperDecodeSize() {
-        const monitor = panel.controller.targetMonitor || Hyprland.focusedMonitor;
-        if (!monitor || !(monitor.width > 0) || !(monitor.height > 0))
-            return;
-        const longest = Math.max(monitor.width, monitor.height);
-        const scale = Math.min(1, wallpaperDecodeLimit / longest);
-        const width = Math.max(1, Math.round(monitor.width * scale));
-        const height = Math.max(1, Math.round(monitor.height * scale));
-        if (width !== wallpaperDecodeSize.width || height !== wallpaperDecodeSize.height)
-            wallpaperDecodeSize = Qt.size(width, height);
-    }
-    Component.onCompleted: syncWallpaperDecodeSize()
     anchors { top: true; bottom: true; left: true; right: true }
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "omarchycontrol"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: controller.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     color: "transparent"
+    // One curve for all motion: it moves on the first frame, peaks lower than
+    // InOutCubic (which barely moved for its first 100 ms), and settles softly.
+    readonly property var motionCurve: [0.25, 0.1, 0.25, 1, 1, 1]
     property bool dragging: false
     property bool dragCanceled: false
     function cancelDrag() {
@@ -52,6 +42,7 @@ PanelWindow {
         dragVisual.Drag.cancel();
         dragging = false;
         dragVisual.address = "";
+        dragVisual.captureItem = null;
     }
     function moveDrag(card, x, y) {
         if (!dragging) return;
@@ -116,6 +107,10 @@ PanelWindow {
         function onCancelDrag() { panel.cancelDrag() }
         function onCloseRequested() { surface.close() }
         function onOpenedChanged() { if (panel.controller.opened) surface.open() }
+        function onTargetScreenChanged() {
+            if (panel.controller.targetScreen)
+                panel.lastScreen = panel.controller.targetScreen;
+        }
     }
     Item {
         id: surface
@@ -176,7 +171,6 @@ PanelWindow {
             framesReady = true;
         }
         function open() {
-            panel.syncWallpaperDecodeSize();
             entrance.stop();
             chromeAnimation.stop();
             chromeDelay.stop();
@@ -210,13 +204,15 @@ PanelWindow {
         NumberAnimation {
             id: entrance
             target: surface; property: "entranceProgress"
-            to: 1; duration: 300; easing.type: Easing.InOutCubic
+            to: 1; duration: 300
+            easing.type: Easing.BezierSpline; easing.bezierCurve: panel.motionCurve
             onFinished: if (panel.controller.closing) Qt.callLater(panel.controller.finishClose)
         }
         NumberAnimation {
             id: chromeAnimation
             target: surface; property: "chromeProgress"
-            to: 1; duration: 260; easing.type: Easing.OutCubic
+            to: 1; duration: 260
+            easing.type: Easing.BezierSpline; easing.bezierCurve: panel.motionCurve
         }
         Timer {
             id: chromeDelay
@@ -225,39 +221,20 @@ PanelWindow {
             onTriggered: if (!panel.controller.closing) chromeAnimation.start()
         }
         Keys.onPressed: event => panel.key(event)
-        // Keep the wallpaper in an offscreen buffer even while closed. An
-        // opacity-0 Image skips GPU upload, so the first visible frame would
-        // otherwise be the gray fill. Never paint that fill.
+        // Decoded once at the overlay's native resolution (Qt applies the
+        // device pixel ratio to sourceSize). The surface stays mapped, so the
+        // texture uploads in the warm frame of the first opening and stays
+        // resident; an extra offscreen copy of it bought nothing.
         Image {
             id: wallpaper
             anchors.fill: parent
-            source: panel.theme.wallpaperSource
-            sourceSize: panel.wallpaperDecodeSize
+            source: width > 0 && height > 0 ? panel.theme.wallpaperSource : ""
+            sourceSize: Qt.size(width, height)
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
-            cache: true
-            onStatusChanged: if (status === Image.Ready) wallpaperBuffer.scheduleUpdate()
-        }
-        ShaderEffectSource {
-            id: wallpaperBuffer
-            anchors.fill: parent
-            sourceItem: wallpaper
-            hideSource: true
-            live: false
-            visible: true
             opacity: panel.controller.opened && (surface.sceneReady || surface.entranceStarted)
-                     && wallpaper.status === Image.Ready ? 1 : 0
+                     && status === Image.Ready ? 1 : 0
             Rectangle { anchors.fill: parent; color: "#26000000"; opacity: surface.entranceProgress }
-        }
-        Connections {
-            target: wallpaper
-            function onStatusChanged() {
-                if (wallpaper.status === Image.Ready)
-                    wallpaperBuffer.scheduleUpdate()
-            }
-            function onSourceChanged() { wallpaperBuffer.scheduleUpdate() }
-            function onWidthChanged() { wallpaperBuffer.scheduleUpdate() }
-            function onHeightChanged() { wallpaperBuffer.scheduleUpdate() }
         }
         MouseArea { anchors.fill: parent; onClicked: { if (panel.dragging) panel.cancelDrag(); else panel.controller.hide() } }
         Item {
@@ -276,7 +253,7 @@ PanelWindow {
                 transform: Translate { y: -10 * (1 - surface.chromeProgress) }
                 x: 40; y: 24; width: Math.max(0, parent.width - 80)
                 height: Math.max(112,Math.min(164,parent.height*0.125))
-                controller: panel.controller; theme: panel.theme
+                controller: panel.controller; theme: panel.theme; screen: panel.screen
                 dragSource: dragVisual; dragActive: panel.dragging
                 onMoveRequested: (address, workspaceId) => panel.controller.moveWindow(address,workspaceId)
             }
@@ -313,14 +290,35 @@ PanelWindow {
                         x: cell.x; y: cell.y; width: cell.width; height: cell.height
                         chromeScale: cell.chromeScale
                         settled: surface.entranceProgress === 1
+                        // Once settled, a new arrangement (a window dragged away,
+                        // opened, or closed) glides into place instead of jumping.
+                        // Previews have no offscreen layer, so resizing is cheap.
+                        // Only between two real placements: a new card's first cell
+                        // is a placeholder until the layout catches up with the
+                        // model, later in the same turn. Gliding from it would fly
+                        // the card out of the grid's corner.
+                        property bool placed: false
+                        Timer { interval: 0; running: true; onTriggered: card.placed = true }
+                        Behavior on x { enabled: card.settled && card.placed; NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: panel.motionCurve } }
+                        Behavior on y { enabled: card.settled && card.placed; NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: panel.motionCurve } }
+                        Behavior on width { enabled: card.settled && card.placed; NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: panel.motionCurve } }
+                        Behavior on height { enabled: card.settled && card.placed; NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: panel.motionCurve } }
+                        // Cards that arrive after the entrance fade in instead of popping.
+                        property real appearance: 1
+                        NumberAnimation on appearance {
+                            id: appear
+                            running: false; from: 0; to: 1; duration: 180
+                            easing.type: Easing.BezierSpline; easing.bezierCurve: panel.motionCurve
+                        }
+                        Component.onCompleted: if (surface.entranceStarted) { appearance = 0; appear.start(); }
                         readonly property bool hasOrigin: Model.hasGeometry(ipc) && width > 12 * chromeScale
                         readonly property real sourceScale: hasOrigin ? ipc.size[0] / (width - 12 * chromeScale) : 0.96
                         readonly property real sourceX: hasOrigin
                             ? ipc.at[0] - (panel.controller.targetMonitor ? panel.controller.targetMonitor.x : 0) - grid.x - x - 6 * chromeScale : 0
                         readonly property real sourceY: hasOrigin
                             ? ipc.at[1] - (panel.controller.targetMonitor ? panel.controller.targetMonitor.y : 0) - grid.y - y - 6 * chromeScale : 16
-                        // Animate transforms, not layout/capture dimensions. The
-                        // preview's top-left starts at the real client position.
+                        // The entrance and exit animate transforms. The preview's
+                        // top-left starts at the real client position.
                         transform: [
                             Scale {
                                 origin.x: 6 * card.chromeScale; origin.y: 6 * card.chromeScale
@@ -332,8 +330,11 @@ PanelWindow {
                                 y: card.sourceY * (1 - surface.entranceProgress)
                             }
                         ]
-                        opacity: hasOrigin ? (previewReady || surface.entranceStarted ? 1 : 0) : surface.entranceProgress
-                        z: surface.entranceProgress < 1 ? -Math.max(0, Number(ipc.focusHistoryID) || 0) : 0
+                        opacity: (hasOrigin ? (previewReady || surface.entranceStarted ? 1 : 0) : surface.entranceProgress) * appearance
+                        // The window being activated flies back on top; the controller
+                        // raises it under the overlay, so nothing reorders at the end.
+                        z: surface.entranceProgress < 1
+                            ? (address === panel.controller.activatingAddress ? 1 : -Math.max(0, Number(ipc.focusHistoryID) || 0)) : 0
                         chromeOpacity: Math.max(0, (surface.entranceProgress - 0.35) / 0.65)
                         onPreviewReadyChanged: Qt.callLater(surface.tryStartEntrance)
                         controller: panel.controller; theme: panel.theme
@@ -346,6 +347,8 @@ PanelWindow {
                         onDragStarted: (x,y) => {
                             panel.dragCanceled = false;
                             dragVisual.address = address;
+                            dragVisual.captureItem = card.captureItem;
+                            dragVisual.title = card.title;
                             panel.dragging = true;
                             panel.moveDrag(card,x,y);
                         }
@@ -387,6 +390,10 @@ PanelWindow {
             id: dragVisual
             objectName: "dragVisual"
             property string address: ""
+            // Mirrors the dragged card's live capture instead of capturing the
+            // window again: no second capture per drag, no blank first frame.
+            property Item captureItem: null
+            property string title: ""
             z: 100; width: 240; height: 160
             visible: panel.dragging
             color: panel.theme.background; radius: 8
@@ -396,7 +403,27 @@ PanelWindow {
             Drag.keys: ["omarchycontrol-window"]
             Drag.supportedActions: Qt.MoveAction
             Drag.hotSpot.x: width / 2; Drag.hotSpot.y: height / 2
-            WindowPreview { anchors.fill: parent; anchors.margins: 5; toplevel: panel.controller.findWindow(dragVisual.address); enabled: panel.dragging; live: true }
+            ShaderEffectSource {
+                readonly property Item capture: dragVisual.captureItem
+                readonly property real fit: capture
+                    ? Math.min((dragVisual.width - 10) / Math.max(1, capture.width),
+                        (dragVisual.height - 10) / Math.max(1, capture.height)) : 0
+                anchors.centerIn: parent
+                width: capture ? capture.width * fit : 0
+                height: capture ? capture.height * fit : 0
+                visible: panel.dragging && !!capture && capture.visible
+                sourceItem: visible ? capture : null
+            }
+            Text {
+                anchors.fill: parent; anchors.margins: 12
+                visible: panel.dragging && !(dragVisual.captureItem && dragVisual.captureItem.visible)
+                text: dragVisual.title
+                textFormat: Text.PlainText
+                color: panel.theme.foreground
+                font.pixelSize: 14
+                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+            }
         }
     }
 }
